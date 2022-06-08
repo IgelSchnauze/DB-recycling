@@ -1,0 +1,291 @@
+create table Admin_Log
+(
+    _login_     varchar(15) not null
+        constraint Admin_Log_pk
+            primary key nonclustered,
+    _pass_word_ varchar(10) not null
+)
+go
+
+create unique index Admin_Log__login__uindex
+    on Admin_Log (_login_)
+go
+
+create table Container
+(
+    idType      int identity
+        constraint PK_Container_idType
+            primary key,
+    KindGarbage varchar(50) not null,
+    Volume      float,
+    StorageDays smallint
+)
+go
+
+create table Driver
+(
+    innDriver   bigint      not null
+        constraint PK_Driver_innDriver
+            primary key,
+    Passport    nvarchar(70),
+    PhoneNum    varchar(15) not null
+        constraint check_num
+            check ([PhoneNum] like '[8]-[0-9][0-9][0-9]-[0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+    _pass_word_ varchar(10)
+)
+go
+
+create table Factory
+(
+    innFactory bigint not null
+        constraint PK_Factory_innFactory
+            primary key,
+    Name       nvarchar(50),
+    Address    nvarchar(50),
+    PhoneNum   varchar(15)
+        constraint check_num_fact
+            check ([PhoneNum] like '[8]-[0-9][0-9][0-9]-[0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')
+)
+go
+
+create table RecycCompany
+(
+    innComp  bigint not null
+        constraint PK_RecycCompany_innCompany
+            primary key,
+    Name     nvarchar(50),
+    Address  nvarchar(50),
+    PhoneNum varchar(15)
+        constraint check_num_recyc
+            check ([PhoneNum] like '[8]-[0-9][0-9][0-9]-[0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')
+)
+go
+
+create table Recyc_Fact
+(
+    innComp    bigint not null
+        constraint FK_RecycCompany_innCompany
+            references RecycCompany,
+    innFactory bigint not null
+        constraint FK_Factoryory_innFactory
+            references Factory,
+    constraint PR_Recyc_Fact
+        primary key (innComp, innFactory)
+)
+go
+
+create table Repository
+(
+    idRepos     int identity
+        constraint PK_Repository_idRepository
+            primary key,
+    Address     nvarchar(50),
+    KindGarbage varchar(50)
+)
+go
+
+create table Repos_Pecyc
+(
+    idRepos int    not null
+        constraint FK_Repos_Recyc
+            references Repository
+        constraint FK_table1_Repository_idRepository
+            references Repository,
+    innComp bigint not null
+        constraint FK_Repos_Recyc_2
+            references RecycCompany
+        constraint FK_table1_RecycCompany_innCompany
+            references RecycCompany,
+    constraint PK_Repos_Pecyc
+        primary key (idRepos, innComp)
+)
+go
+
+create table TransCompany
+(
+    idCompany bigint identity
+        constraint PK_TransCompany_innCompany
+            primary key,
+    Name      nvarchar(50),
+    Address   nvarchar(50),
+    PhoneNum  varchar(15)
+        constraint check_num_trans
+            check ([PhoneNum] like '[8]-[0-9][0-9][0-9]-[0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')
+)
+go
+
+create table AssemPoint
+(
+    idPoint      int identity
+        constraint PK_AssemPoint_idPoint
+            primary key,
+    Address      nvarchar(50) not null,
+    AccessTime   time,
+    TransCompany bigint
+        constraint FK_AssemPoint_TransCompany_idCompany
+            references TransCompany
+)
+go
+
+create table Crew
+(
+    CarNumber    varchar(6) not null
+        constraint PK_Crew_CarNumber
+            primary key,
+    Capacity     int,
+    Driver       bigint     not null
+        constraint KEY_Crew_Driver
+            unique
+        constraint u_driver
+            unique
+        constraint FK_Crew
+            references Driver,
+    TransCompany bigint     not null
+        constraint FK_Crew_TransCompany_innCompany
+            references TransCompany
+)
+go
+
+create table Point_Cont
+(
+    idPoint  int not null
+        constraint FK_Point_Cont
+            references AssemPoint,
+    idType   int not null
+        constraint FK_Point_Cont_Container_idType
+            references Container,
+    Quantity tinyint,
+    constraint PK_Point_Cont
+        primary key (idType, idPoint)
+)
+go
+
+create table Rating
+(
+    CarNumber varchar(6)
+        constraint fk_rating
+            references Crew,
+    SumSkip   int
+)
+go
+
+create table Timetable
+(
+    idOperation int identity
+        constraint PK_Timetable_idOperation
+            primary key,
+    Date        date not null,
+    AssemPoint  int  not null
+        constraint FK_Timetable_AssemPoint_idPoint
+            references AssemPoint,
+    Crew        varchar(6)
+        constraint FK_Timetable_Crew_CarNumber
+            references Crew,
+    Repository  int
+        constraint FK_Timetable_Repository_idRepository
+            references Repository,
+    ExportTime  time
+)
+go
+
+create trigger triggerExtime
+    on Timetable
+    for UPDATE
+    as
+begin
+    --создание необх переменных
+    declare @extimenew TIME, @date DATE;
+
+    set @extimenew = (select ExportTime from inserted);
+    set @date = (select Date from inserted);
+
+    if @date > GETDATE() and @extimenew is not null --хотят поставить время на еще не совершенную операцию
+        begin
+            print 'DateError: Changes are not possible';
+            rollback;
+        end
+end
+go
+
+create trigger triggerNote
+    on Timetable
+    for INSERT
+    as
+begin
+    --создание необх переменных
+    declare @date DATE, @point INT, @crew VARCHAR(6), @repos INT, @extime TIME;
+
+    --чтение данных новой записи в переменные
+    set @date = (select Date from inserted);
+    set @point = (select AssemPoint from inserted);
+    set @crew = (select Crew from inserted);
+    set @repos = (select Repository from inserted);
+    set @extime = (select ExportTime from inserted);
+
+    if dbo.IsNoteCorrect(@date, @point, @crew, @repos, @extime) = 0
+        begin
+            print 'DateError: Note is not correct';
+            rollback;
+        end
+    else
+        if @extime is null --прибавляем пока пропуск в таблицу рейтинга
+            begin
+                update Rating
+                set SumSkip = SumSkip + 1
+                where CarNumber = @crew
+            end
+end
+go
+
+create trigger triggerRating
+    on Timetable
+    after UPDATE
+    as
+begin
+    declare @car VARCHAR(6), @extimenew TIME, @extimelast TIME,@date DATE;
+
+    set @car = (select Crew from inserted);
+    set @extimenew = (select ExportTime from inserted);
+    set @extimelast = (select ExportTime from deleted);
+    set @date = (select Date from inserted);
+
+    if exists(select * from Rating where CarNumber = @car)
+        begin
+            if @date <= GETDATE() and @extimelast is null and @extimenew is not null --если только вписали время вывоза
+                update Rating
+                set SumSkip = SumSkip - 1
+                where CarNumber = @car;
+            if @date <= GETDATE() and @extimelast is not null and @extimenew is null --если удалили время вывоза
+                update Rating
+                set SumSkip = SumSkip + 1
+                where CarNumber = @car;
+        end;
+    else --добавляем новую запись
+        begin
+            if @date <= GETDATE() and @extimelast is null and @extimenew is not null
+                insert into Rating (CarNumber, SumSkip) values (@car, 0);
+            if @date <= GETDATE() and @extimelast is not null and @extimenew is null
+                insert into Rating (CarNumber, SumSkip) values (@car, 1);
+        end
+end
+go
+
+create function IsNoteCorrect(@date DATE, @point INT, @crew VARCHAR(6), @repos INT, @extime TIME) returns int
+as
+begin
+    if exists(select * from AssemPoint where AssemPoint.idPoint = @point)
+        and exists(select * from Crew where Crew.CarNumber = @crew)
+        and exists(select * from Repository where Repository.idRepos = @repos)
+        and exists(select TransCompany
+                   from AssemPoint
+                   where idPoint = @point
+                     and exists(select TransCompany
+                                from Crew
+                                where CarNumber = @crew
+                                  and Crew.TransCompany = AssemPoint.TransCompany))
+        and @date >= GETDATE() --чтобы записи на старые даты не вставляли
+        and @extime is null --чтобы заранее не заполняли время фактич вывоза
+        return 1;
+    return 0;
+end
+go
